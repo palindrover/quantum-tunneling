@@ -39,12 +39,12 @@ def eigenPsi(V, x):
 
 #    plt.plot(x, V, label="V(x)")
 #    plt.plot(x, psi, label="$\psi(x)$")
-#    plt.plot(x, np.abs(psi)**2, label="$|\psi$|^2")
+#    plt.plot(x, np.abs(psi)**2, label="$|\psi|^2$")
 #    plt.legend()
 #    plt.grid(True)
 #    plt.show()
 
-    return psi, w[1] - w[0]
+    return psi, w
 
 
 def measurePeriod(time, PL):
@@ -53,16 +53,10 @@ def measurePeriod(time, PL):
     f = PL - 0.5
     idx = np.where(np.diff(np.sign(f)) != 0)[0]
     t = time[idx] - f[idx] * (time[idx+1] - time[idx]) / (f[idx+1] - f[idx]) 
-
-    print(t)
-    print(np.diff(t))
     
-    return 2 * (t[-1] - t[0]) / (len(t) - 1)
+    return np.mean(t[2:] - t[:-2])
 
-
-def main(V0, L, Nx, Tfin, Nt, n_out):
-    save_every = max(1, Nt//n_out)
-
+def buildSystem(V0, L, Nx, Tfin, Nt):
     x = np.linspace(-L, L, Nx)
     dx = x[1] - x[0]
     dt = Tfin/Nt
@@ -75,20 +69,21 @@ def main(V0, L, Nx, Tfin, Nt, n_out):
     Amain = 1 + 2*r + beta*V[1:-1]
     Asub = np.full(Nx-3, -r, dtype=complex)
     Bmain = 1 - 2*r - beta*V[1:-1]
-    
-    psi, w = eigenPsi(V, x)
-    dE = w[1] - w[0]
 
     ab = np.zeros((3, Nx - 2), dtype=complex)
     ab[0, 1:] = Asub
     ab[1] = Amain
     ab[2, :-1] = Asub
 
+    return x, dx, dt, V, r, ab, Bmain
+
+def evolve(psi, x, dx, dt, Nt, n_out, Bmain, ab, r):
+    psi = psi.copy()
+    save_every = max(1, Nt//n_out)
     time = []
     PL = []
     norm = []
     left = x < 0
-
     for i in range(Nt):
         if i % save_every == 0:
             time.append(i*dt)
@@ -98,12 +93,40 @@ def main(V0, L, Nx, Tfin, Nt, n_out):
         Bpsi = Bmain * psi[1:-1] + r * (psi[:-2] + psi[2:])
         psi[1:-1] = solve_banded((1, 1), ab, Bpsi)
 
-    print(measurePeriod(time, PL))
+    return time, PL, norm
 
-    plt.plot(time, PL, label="$P_L(t)$")
-    plt.plot(time, norm, label="norm")
-    plt.legend()
-    plt.grid(True)
-    plt.show()
+def compareSplitting(w, dt, T):
+    dE = w[1] - w[0]
+    dECN = hbar * 2 * (np.arctan(w[1] * dt / (2 * hbar)) - np.arctan(w[0] * dt / (2 * hbar))) / dt
+    dEm = 2 * np.pi * hbar / T
 
-main(8.0, 3.0, 1001, 100.0, 10000, 2000)
+    methodError = (dECN - dE) / dE
+    measureError = (dEm - dECN) / dECN
+
+    return {
+            "dE": dE, 
+            "dECN": dECN, 
+            "dEm": dEm, 
+            "methodError": methodError, 
+            "measureError": measureError
+            }
+
+def main(V0, L, Nx, Tfin, Nt, n_out):
+
+    x, dx, dt, V, r, ab, Bmain = buildSystem(V0, L, Nx, Tfin, Nt)
+    
+    psi, w = eigenPsi(V, x)
+
+    time, PL, norm = evolve(psi, x, dx, dt, Nt, n_out, Bmain, ab, r)
+
+    T = measurePeriod(time, PL)
+
+    res = compareSplitting(w, dt, T)
+
+    print(f"\n\n{Nt}\n")
+    for key, val in res.items():
+        print(f"{key:12s} {val: .6e}")
+
+if __name__ == "__main__":
+    for Nt in [2000, 5000, 10000, 20000]:
+        main(8.0, 3.0, 1001, 100.0, Nt, 2000)
