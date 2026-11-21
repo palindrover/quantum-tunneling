@@ -58,6 +58,38 @@ double measureTime(auto&& f)
 	return std::chrono::duration<double, std::milli>(t1-t0).count();
 }
 
+void tridiagonalMult(const cd* __restrict d, cd s, const cd* __restrict x,
+		cd* __restrict y, std::ptrdiff_t n)
+{
+	y[0] = d[0] * x[0] + s * x[1];
+	y[n-1] = d[n-1] * x[n-1] + s * x[n-2];
+
+	#pragma omp parallel for simd schedule(static) if(n > 20000)
+	for (std::ptrdiff_t i = 1; i < n-1; i++)
+		y[i] = s * (x[i-1] + x[i+1]) + d[i] * x[i];
+}
+
+//void tridiagonalMult(const std::vector<cd>& Amain, cd s, std::vector<cd>& x)
+//{
+//	int n = Amain.size();
+//	if(n == 0) return;
+//	if(n == 1) 
+//	{
+//		x[0] *= Amain[0];
+//		return;
+//	}
+//	
+//	cd prev = x[0], cur;
+//	x[0] = Amain[0] * x[0] + s * x[1];
+//	for(int i = 1; i < n-1; i++)
+//	{
+//		cur = x[i];
+//		x[i] = s * (prev + x[i+1]) + Amain[i] * x[i];
+//		prev = cur;
+//	}
+//	x[n-1] = s * prev + Amain[n-1] * x[n-1];
+//}
+
 CNSystem buildSystem(const double V0, const double L, const int Nx, const double Tfin,
 		const int Nt)
 {
