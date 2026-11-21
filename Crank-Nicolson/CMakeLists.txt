@@ -11,7 +11,7 @@ endif()
 
 option(TUNNELING_NATIVE "Оптимизировать под текущий процессор (-march=native)" ON)
 
-add_executable(tunneling CN.cpp)
+add_executable(tunneling cn.cpp)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(tunneling PRIVATE -Wall -Wextra -Wpedantic)

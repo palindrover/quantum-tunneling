@@ -1,7 +1,10 @@
 #include <algorithm>
+#include <map>
+#include <numbers>
 #include <format>
 #include <cmath>
 #include <limits>
+#include <ratio>
 #include <span>
 #include <cstddef>
 #include <iostream>
@@ -9,6 +12,8 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <chrono>
+#include <utility>
 #include <complex>
 #define lapack_complex_float  std::complex<float>
 #define lapack_complex_double std::complex<double>
@@ -44,6 +49,14 @@ struct ComparisonResult
 {
 	double dE, dECN, dEm, methodError, measureError;
 };
+
+double measureTime(auto&& f)
+{
+	const auto t0 = std::chrono::steady_clock::now();
+	f();
+	const auto t1 = std::chrono::steady_clock::now();
+	return std::chrono::duration<double, std::milli>(t1-t0).count();
+}
 
 CNSystem buildSystem(const double V0, const double L, const int Nx, const double Tfin,
 		const int Nt)
@@ -214,31 +227,53 @@ ComparisonResult compareSplitting(const vecd& E, const double dt, const double T
 	return res;
 }
 
-int main()
-{
-	double V0 = 8.0, L = 3.0, Tfin = 100.0;
-	int Nx = 1001, Nt = 5000, n_out = 2000;
+std::map<int, double> evolutionTime;
+int iterations = 50;
 
+void Crank_Nicolson(double V0, double L, int Nx, double Tfin, int Nt, int n_out)
+{
 	auto sys = buildSystem(V0, L, Nx, Tfin, Nt);
 
 	auto [E, psi] = eigenPsi(sys.V, sys.x, 2);
 	auto psi0 = localizedState(psi);
 
-	auto [time, PL, norm] = evolve(sys, psi0, Nt, n_out);
+	EvolutionResult evo;
+	double tEvolve = measureTime([&] { evo = evolve(sys, psi0, Nt, n_out); });
+	auto& [time, PL, norm] = evo;
+	evolutionTime[Nt] += tEvolve / iterations;
+	//std::cout << "Evolution time with Nt = " << Nt << ":\t" << tEvolve << '\n';
 
 	double period = measurePeriod(time, PL);
 
 	ComparisonResult compare = compareSplitting(E, sys.dt, period);
 
-	std::cout << std::setprecision(15);
+//	std::cout << std::setprecision(15);
+//
+//	std::cout << Nt << "\n\n";
+//	std::cout << std::format(
+//  	  "dE (spectrum)  = {:.8e}\n"
+//  	  "dE (CN)        = {:.8e}\n"
+//  	  "dE_m           = {:.8e}\n"
+//  	  "method error   = {:.3e}\n"
+//  	  "measure error  = {:.3e}\n",
+//  	  compare.dE, compare.dECN, compare.dEm, compare.methodError, compare.measureError);
+//	std::cout << "\n\n";
+}
 
-	std::cout << std::format(
-  	  "dE (spectrum)  = {:.8e}\n"
-  	  "dE (CN)        = {:.8e}\n"
-  	  "dE_m           = {:.8e}\n"
-  	  "method error   = {:.3e}\n"
-  	  "measure error  = {:.3e}\n",
-  	  compare.dE, compare.dECN, compare.dEm, compare.methodError, compare.measureError);
+int main()
+{
+	std::vector<int> times {2000, 5000, 10000, 20000};
+
+	for(auto i : times) evolutionTime[i] = 0;
+
+	for(int j = 0; j < iterations; j++)
+	{
+		for(auto i : times) 
+			Crank_Nicolson(8.0, 3.0, 1001, 100.0, i, 2000);
+	}
+
+	for(auto i : evolutionTime)
+		std::cout << i.first << ":\t" << i.second << '\n';
 
 	return 0;
 }
