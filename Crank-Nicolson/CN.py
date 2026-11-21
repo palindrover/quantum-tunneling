@@ -6,6 +6,14 @@ hbar = 1.0
 m = 1.0
 a = 1.0
 
+def graph(x, V, psi):
+    plt.plot(x, V, label="V(x)")
+    plt.plot(x, psi, label="$\psi(x)$")
+    plt.plot(x, np.abs(psi)**2, label="$|\psi|^2$")
+    plt.legend()
+    plt.grid(True)
+    plt.show()
+
 def countPsi(V0, x):
     omega = np.sqrt(8 * V0 / (m * a**2))
     sigma = np.sqrt(hbar / (m * omega))
@@ -36,13 +44,6 @@ def eigenPsi(V, x):
     left = x < 0
     if dx * np.sum(np.abs(psi[left])**2) < 0.5:
         psi = psi[::-1]
-
-#    plt.plot(x, V, label="V(x)")
-#    plt.plot(x, psi, label="$\psi(x)$")
-#    plt.plot(x, np.abs(psi)**2, label="$|\psi|^2$")
-#    plt.legend()
-#    plt.grid(True)
-#    plt.show()
 
     return psi, w
 
@@ -97,7 +98,8 @@ def evolve(psi, x, dx, dt, Nt, n_out, Bmain, ab, r):
 
 def compareSplitting(w, dt, T):
     dE = w[1] - w[0]
-    dECN = hbar * 2 * (np.arctan(w[1] * dt / (2 * hbar)) - np.arctan(w[0] * dt / (2 * hbar))) / dt
+    dECN = hbar * 2 * (np.arctan(w[1] * dt / (2 * hbar)) - 
+                       np.arctan(w[0] * dt / (2 * hbar))) / dt
     dEm = 2 * np.pi * hbar / T
 
     methodError = (dECN - dE) / dE
@@ -116,6 +118,8 @@ def main(V0, L, Nx, Tfin, Nt, n_out):
     x, dx, dt, V, r, ab, Bmain = buildSystem(V0, L, Nx, Tfin, Nt)
     
     psi, w = eigenPsi(V, x)
+
+    #if Nt == 20000: graph(x, V, psi)
 
     time, PL, norm = evolve(psi, x, dx, dt, Nt, n_out, Bmain, ab, r)
 
