@@ -259,7 +259,7 @@ ComparisonResult compareSplitting(const vecd& E, const double dt, const double T
 	return res;
 }
 
-std::map<int, double> evolutionTime;
+std::map<int, double> cnTime;
 int iterations = 50;
 
 void Crank_Nicolson(double V0, double L, int Nx, double Tfin, int Nt, int n_out)
@@ -269,10 +269,10 @@ void Crank_Nicolson(double V0, double L, int Nx, double Tfin, int Nt, int n_out)
 	auto [E, psi] = eigenPsi(sys.V, sys.x, 2);
 	auto psi0 = localizedState(psi);
 
-	EvolutionResult evo;
-	double tEvolve = measureTime([&] { evo = evolve(sys, psi0, Nt, n_out); });
+	EvolutionResult evo = evolve(sys, psi0, Nt, n_out);
+	//double tEvolve = measureTime([&] { evo = evolve(sys, psi0, Nt, n_out); });
 	auto& [time, PL, norm] = evo;
-	evolutionTime[Nt] += tEvolve / iterations;
+	//evolutionTime[Nt] += tEvolve / iterations;
 	//std::cout << "Evolution time with Nt = " << Nt << ":\t" << tEvolve << '\n';
 
 	double period = measurePeriod(time, PL);
@@ -296,16 +296,19 @@ int main()
 {
 	std::vector<int> times {2000, 5000, 10000, 20000};
 
-	for(auto i : times) evolutionTime[i] = 0;
+	for(auto i : times) cnTime[i] = 0;
 
 	for(int j = 0; j < iterations; j++)
 	{
 		for(auto i : times) 
-			Crank_Nicolson(8.0, 3.0, 1001, 100.0, i, 2000);
+		{
+			cnTime[i] += measureTime([&] 
+					{ Crank_Nicolson(8.0, 3.0, 1001, 100.0, i, 2000);}) / iterations;
+		}
 	}
 
-	for(auto i : evolutionTime)
-		std::cout << i.first << ":\t" << i.second << '\n';
+	for(auto i : cnTime)
+		std::cout << "Nt = " << i.first << ":\t" << i.second << " ms\n";
 
 	return 0;
 }

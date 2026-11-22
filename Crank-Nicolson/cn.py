@@ -116,33 +116,41 @@ def compareSplitting(w, dt, T):
 
 def main(V0, L, Nx, Tfin, Nt, n_out):
 
-    tBuild = perf_counter()
+    #    tBuild = perf_counter()
     x, dx, dt, V, r, ab, Bmain = buildSystem(V0, L, Nx, Tfin, Nt)
-    print(f"Время buildSystem:\t", (perf_counter() - tBuild) * 1e3)
+#    print(f"Время buildSystem:\t", (perf_counter() - tBuild) * 1e3)
 
-    tEigen = perf_counter()
+   # tEigen = perf_counter()
     psi, w = eigenPsi(V, x)
-    print(f"Время eigenPsi:\t", (perf_counter() - tEigen) * 1e3)
+    #print(f"Время eigenPsi:\t", (perf_counter() - tEigen) * 1e3)
 
     #if Nt == 20000: graph(x, V, psi)
 
-    tEvolve = perf_counter()
+    #tEvolve = perf_counter()
     time, PL, norm = evolve(psi, x, dx, dt, Nt, n_out, Bmain, ab, r)
-    print(f"Время evolve:\t", (perf_counter() - tEvolve) * 1e3)
+    #print(f"Время evolve:\t", (perf_counter() - tEvolve) * 1e3)
 
-    tPeriod = perf_counter()
+    #tPeriod = perf_counter()
     T = measurePeriod(time, PL)
-    print(f"Время measurePeriod:\t", (perf_counter() - tPeriod) * 1e3)
+    #print(f"Время measurePeriod:\t", (perf_counter() - tPeriod) * 1e3)
 
-    tCompare = perf_counter()
+    #tCompare = perf_counter()
     res = compareSplitting(w, dt, T)
-    print(f"Время compareSplitting:\t", (perf_counter() - tCompare) * 1e3)
+    #print(f"Время compareSplitting:\t", (perf_counter() - tCompare) * 1e3)
 
 #    print(f"\n\n{Nt}\n")
 #    for key, val in res.items():
 #        print(f"{key:12s} {val: .6e}")
 
+
 if __name__ == "__main__":
-    for Nt in [2000, 5000, 10000, 20000]:
-        print("Nt = ", Nt)
-        main(8.0, 3.0, 1001, 100.0, Nt, 2000)
+
+    cnTime = dict.fromkeys([2000, 5000, 10000, 20000], 0.0)
+
+    for iterations in range(50):
+        for Nt in [2000, 5000, 10000, 20000]:
+            time = perf_counter()
+            main(8.0, 3.0, 1001, 100.0, Nt, 2000)
+            cnTime[Nt] += (perf_counter() - time) / 50 * 1e3
+
+    print(cnTime)
