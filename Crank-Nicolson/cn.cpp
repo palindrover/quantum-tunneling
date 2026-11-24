@@ -50,6 +50,12 @@ struct ComparisonResult
 	double dE, dECN, dEm, methodError, measureError;
 };
 
+struct FactorizationResult
+{
+	cd s;
+	std::vector<cd> inv_gamma;
+};
+
 double measureTime(auto&& f)
 {
 	const auto t0 = std::chrono::steady_clock::now();
@@ -64,31 +70,30 @@ void tridiagonalMult(const cd* __restrict d, cd s, const cd* __restrict x,
 	y[0] = d[0] * x[0] + s * x[1];
 	y[n-1] = d[n-1] * x[n-1] + s * x[n-2];
 
-	#pragma omp parallel for simd schedule(static) if(n > 20000)
+	#pragma omp parallel for simd schedule(static) if(parallel: n > 20000)
 	for (std::ptrdiff_t i = 1; i < n-1; i++)
 		y[i] = s * (x[i-1] + x[i+1]) + d[i] * x[i];
 }
 
-//void tridiagonalMult(const std::vector<cd>& Amain, cd s, std::vector<cd>& x)
-//{
-//	int n = Amain.size();
-//	if(n == 0) return;
-//	if(n == 1) 
-//	{
-//		x[0] *= Amain[0];
-//		return;
-//	}
-//	
-//	cd prev = x[0], cur;
-//	x[0] = Amain[0] * x[0] + s * x[1];
-//	for(int i = 1; i < n-1; i++)
-//	{
-//		cur = x[i];
-//		x[i] = s * (prev + x[i+1]) + Amain[i] * x[i];
-//		prev = cur;
-//	}
-//	x[n-1] = s * prev + Amain[n-1] * x[n-1];
-//}
+FactorizationResult factor(cd s, const std::vector<cd>& b)
+{
+	cd s2 = s * s;
+	std::vector<cd> inv_gamma(b.size());
+	inv_gamma[0] = 1.0 / b[0];	
+
+	for(size_t i = 1; i < b.size(); i++) 
+		inv_gamma[i] = 1.0 / (b[i] - s2 * inv_gamma[i-1]);
+
+	return {s, inv_gamma};
+}
+
+void thomas(const FactorizationResult& f, std::span<cd> d)
+{
+	d[0] = d[0] * f.inv_gamma[0];
+	for(size_t i = 1; i < d.size(); i++) d[i] = (d[i] - f.s * d[i-1]) * f.inv_gamma[i];
+	for(int i = d.size() - 2; i > -1; i--) 
+		d[i] = d[i] - f.s * f.inv_gamma[i] * d[i+1];
+}
 
 CNSystem buildSystem(const double V0, const double L, const int Nx, const double Tfin,
 		const int Nt)
@@ -188,16 +193,11 @@ double totalNorm(const std::span<cd>& psi, const double dx)
 EvolutionResult evolve(const CNSystem& s, std::vector<cd>& psi, const int Nt, 
 		const int n_out)
 {
-	int save_every = Nt / n_out;
+	int save_every = std::max(1, Nt / n_out);
 	const int Nx = static_cast<int>(psi.size());
 	const lapack_int n = Nx - 2;
 
-	std::vector<cd> dl = s.Asub, d = s.Amain, du = s.Asub, du2(n-2);
-	std::vector<lapack_int> ipiv(n);
-	lapack_int info = LAPACKE_zgttrf(n, dl.data(), d.data(), du.data(), du2.data(),
-			ipiv.data());
-
-	if(info != 0) throw std::runtime_error("zgttrf: info = " + std::to_string(info));
+	const FactorizationResult f = factor(s.Asub[0], s.Amain);
 
 	const size_t k = std::lower_bound(s.x.begin(), s.x.end(), -0.5 * s.dx) - s.x.begin();
 	const bool centerOnGrid = std::abs(s.x[k]) < 0.5 * s.dx;
@@ -217,11 +217,7 @@ EvolutionResult evolve(const CNSystem& s, std::vector<cd>& psi, const int Nt,
 		for(int j = 1; j < Nx - 1; j++)
 			rhs[j] = s.r * psi[j-1] + s.Bmain[j-1] * psi[j] + s.r * psi[j+1];
 
-		info = LAPACKE_zgttrs(LAPACK_COL_MAJOR, 'N', n, 1, 
-				dl.data(), d.data(), du.data(), du2.data(), 
-				ipiv.data(), rhs.data() + 1, n);
-
-		if(info != 0) throw std::runtime_error("zgttrs: info = " + std::to_string(info));
+		thomas(f, std::span(rhs).subspan(1, n));
 
 		std::swap(psi, rhs);
 	}
@@ -259,6 +255,21 @@ ComparisonResult compareSplitting(const vecd& E, const double dt, const double T
 	return res;
 }
 
+void printComparison(ComparisonResult compare, int Nt)
+{
+	std::cout << std::setprecision(15);
+
+	std::cout << Nt << "\n\n";
+	std::cout << std::format(
+  	  "dE (spectrum)  = {:.8e}\n"
+  	  "dE (CN)        = {:.8e}\n"
+  	  "dE_m           = {:.8e}\n"
+  	  "method error   = {:.3e}\n"
+  	  "measure error  = {:.3e}\n",
+  	  compare.dE, compare.dECN, compare.dEm, compare.methodError, compare.measureError);
+	std::cout << "\n\n";
+}
+
 std::map<int, double> cnTime;
 int iterations = 50;
 
@@ -279,20 +290,10 @@ void Crank_Nicolson(double V0, double L, int Nx, double Tfin, int Nt, int n_out)
 
 	ComparisonResult compare = compareSplitting(E, sys.dt, period);
 
-//	std::cout << std::setprecision(15);
-//
-//	std::cout << Nt << "\n\n";
-//	std::cout << std::format(
-//  	  "dE (spectrum)  = {:.8e}\n"
-//  	  "dE (CN)        = {:.8e}\n"
-//  	  "dE_m           = {:.8e}\n"
-//  	  "method error   = {:.3e}\n"
-//  	  "measure error  = {:.3e}\n",
-//  	  compare.dE, compare.dECN, compare.dEm, compare.methodError, compare.measureError);
-//	std::cout << "\n\n";
+//	printComparison(compare, Nt);
 }
 
-int main()
+void speedTest()
 {
 	std::vector<int> times {2000, 5000, 10000, 20000};
 
@@ -309,6 +310,11 @@ int main()
 
 	for(auto i : cnTime)
 		std::cout << "Nt = " << i.first << ":\t" << i.second << " ms\n";
+}
+
+int main()
+{
+	speedTest();
 
 	return 0;
 }
