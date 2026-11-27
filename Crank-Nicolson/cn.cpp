@@ -225,6 +225,41 @@ EvolutionResult evolve(const CNSystem& s, std::vector<cd>& psi, const int Nt,
 	return res;
 }
 
+EvolutionResult evolveLAPACK(const CNSystem& s, std::vector<cd>& psi, const int Nt,
+		const int n_out)
+{
+	int save_every = std::max(1, Nt / n_out);
+	const int Nx = static_cast<int>(psi.size());
+	const size_t n = Nx - 2;
+
+	const FactorizationResult f = factor(s.Asub[0], s.Amain);
+
+	const size_t k = std::lower_bound(s.x.begin(), s.x.end(), -0.5 * s.dx) - s.x.begin();
+	const bool centerOnGrid = std::abs(s.x[k]) < 0.5 * s.dx;
+
+	EvolutionResult res;
+	std::vector<cd> rhs(Nx, 0.0);
+	for(int i = 0; i < Nt; i++)
+	{
+		if(i % save_every == 0)
+		{
+			res.time.push_back(i * s.dt);
+			res.PL.push_back(totalNorm(std::span(psi).first(k), s.dx));
+			if(centerOnGrid) res.PL.back() += 0.5 * std::norm(psi[k]) * s.dx;
+			res.norm.push_back(totalNorm(psi, s.dx));
+		}
+
+		for(int j = 1; j < Nx - 1; j++)
+			rhs[j] = s.r * psi[j-1] + s.Bmain[j-1] * psi[j] + s.r * psi[j+1];
+
+		thomas(f, std::span(rhs).subspan(1, n));
+
+		std::swap(psi, rhs);
+	}
+
+	return res;
+}
+
 double measurePeriod(const vecd& time, const vecd& PL)
 {    
 	if (PL.size() < 2) throw std::runtime_error("measurePeriod: too few points");
@@ -273,7 +308,7 @@ void printComparison(ComparisonResult compare, int Nt)
 std::map<int, double> cnTime;
 int iterations = 50;
 
-void Crank_Nicolson(double V0, double L, int Nx, double Tfin, int Nt, int n_out)
+ComparisonResult Crank_Nicolson(double V0, double L, int Nx, double Tfin, int Nt, int n_out)
 {
 	auto sys = buildSystem(V0, L, Nx, Tfin, Nt);
 
@@ -288,7 +323,7 @@ void Crank_Nicolson(double V0, double L, int Nx, double Tfin, int Nt, int n_out)
 
 	double period = measurePeriod(time, PL);
 
-	ComparisonResult compare = compareSplitting(E, sys.dt, period);
+	return compareSplitting(E, sys.dt, period);
 
 //	printComparison(compare, Nt);
 }
