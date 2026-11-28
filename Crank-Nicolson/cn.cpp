@@ -360,10 +360,15 @@ void speedTest()
 
 int main(int argc, char** argv)
 {
-	if(argc < 4) { fprintf(stderr, "usage: cn V0 a outfile\n"); return 1;}
+	if(argc < 4) { fprintf(stderr, "usage: cn V0 a L Nx Tfin Nt n_out outfile\n"); return 1;}
 	double V0 = std::stod(argv[1]);
 	::a = std::stod(argv[2]);
-	std::string outfile = argv[3];
+	double L = std::stod(argv[3]);
+	int Nx = std::stoi(argv[4]);
+	double Tfin = std::stod(argv[5]);
+	int Nt = std::stoi(argv[6]);
+	int n_out = std::stoi(argv[7]);
+	std::string outfile = argv[8];
 
 	for(int t = 1000; t <= 50000; t += 1000)
 		printComparison(Crank_Nicolson(V0, 3.0, 1001, 100.0, t, 2000), t);
