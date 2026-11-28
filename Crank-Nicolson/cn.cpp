@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cstdio>
 #include <map>
 #include <numbers>
 #include <format>
@@ -64,17 +65,6 @@ double measureTime(auto&& f)
 	return std::chrono::duration<double, std::milli>(t1-t0).count();
 }
 
-void tridiagonalMult(const cd* __restrict d, cd s, const cd* __restrict x,
-		cd* __restrict y, std::ptrdiff_t n)
-{
-	y[0] = d[0] * x[0] + s * x[1];
-	y[n-1] = d[n-1] * x[n-1] + s * x[n-2];
-
-	#pragma omp parallel for simd schedule(static) if(parallel: n > 20000)
-	for (std::ptrdiff_t i = 1; i < n-1; i++)
-		y[i] = s * (x[i-1] + x[i+1]) + d[i] * x[i];
-}
-
 FactorizationResult factor(cd s, const std::vector<cd>& b)
 {
 	cd s2 = s * s;
@@ -85,14 +75,6 @@ FactorizationResult factor(cd s, const std::vector<cd>& b)
 		inv_gamma[i] = 1.0 / (b[i] - s2 * inv_gamma[i-1]);
 
 	return {s, inv_gamma};
-}
-
-void thomas(const FactorizationResult& f, std::span<cd> d)
-{
-	d[0] = d[0] * f.inv_gamma[0];
-	for(size_t i = 1; i < d.size(); i++) d[i] = (d[i] - f.s * d[i-1]) * f.inv_gamma[i];
-	for(int i = d.size() - 2; i > -1; i--) 
-		d[i] = d[i] - f.s * f.inv_gamma[i] * d[i+1];
 }
 
 CNSystem buildSystem(const double V0, const double L, const int Nx, const double Tfin,
@@ -199,40 +181,65 @@ EvolutionResult evolve(const CNSystem& s, std::vector<cd>& psi, const int Nt,
 
 	const FactorizationResult f = factor(s.Asub[0], s.Amain);
 
+	std::vector<cd> c(n), y(n);
+	for(size_t i = 0; i < n; i++) c[i] = f.s * f.inv_gamma[i];
+
 	const size_t k = std::lower_bound(s.x.begin(), s.x.end(), -0.5 * s.dx) - s.x.begin();
 	const bool centerOnGrid = std::abs(s.x[k]) < 0.5 * s.dx;
 
 	EvolutionResult res;
-	std::vector<cd> rhs(Nx, 0.0);
-	for(int i = 0; i < Nt; i++)
+    const size_t n_saves = (Nt + save_every - 1) / save_every;
+    res.time.reserve(n_saves);
+    res.PL.reserve(n_saves);
+    res.norm.reserve(n_saves);
+
+    auto record = [&](int step) 
 	{
-		if(i % save_every == 0)
+        double left = 0.0;
+        for (size_t j = 0; j < k; j++) left += std::norm(psi[j]);
+        double total = left;
+        if (centerOnGrid) left += 0.5 * std::norm(psi[k]);
+
+        res.time.push_back(step * s.dt);
+        res.PL.push_back(left * s.dx);
+        res.norm.push_back(total * s.dx);
+    };
+
+    cd* p = psi.data() + 1;
+    const cd* g = f.inv_gamma.data();
+
+    for (int step = 0; step < Nt; step++)
+    {
+        if (step % save_every == 0) record(step);
+
+        y[0] = p[0] * g[0];
+        for (size_t i = 1; i < n; ++i) y[i] = p[i] * g[i] - c[i] * y[i-1];
+
+        cd chi = y[n-1];
+        p[n-1] = 2.0 * chi - p[n-1];
+        for (ptrdiff_t i = static_cast<ptrdiff_t>(n) - 2; i >= 0; i--) 
 		{
-			res.time.push_back(i * s.dt);
-			res.PL.push_back(totalNorm(std::span(psi).first(k), s.dx));
-			if(centerOnGrid) res.PL.back() += 0.5 * std::norm(psi[k]) * s.dx;
-			res.norm.push_back(totalNorm(psi, s.dx));
-		}
-
-		for(int j = 1; j < Nx - 1; j++)
-			rhs[j] = s.r * psi[j-1] + s.Bmain[j-1] * psi[j] + s.r * psi[j+1];
-
-		thomas(f, std::span(rhs).subspan(1, n));
-
-		std::swap(psi, rhs);
-	}
-
+            chi  = y[i] - c[i] * chi;
+            p[i] = 2.0 * chi - p[i];
+        }
+    }
+	
 	return res;
 }
 
 EvolutionResult evolveLAPACK(const CNSystem& s, std::vector<cd>& psi, const int Nt,
 		const int n_out)
 {
-	int save_every = std::max(1, Nt / n_out);
+	int save_every = Nt / n_out;
 	const int Nx = static_cast<int>(psi.size());
-	const size_t n = Nx - 2;
+	const lapack_int n = Nx - 2;
 
-	const FactorizationResult f = factor(s.Asub[0], s.Amain);
+	std::vector<cd> dl = s.Asub, d = s.Amain, du = s.Asub, du2(n-2);
+	std::vector<lapack_int> ipiv(n);
+	lapack_int info = LAPACKE_zgttrf(n, dl.data(), d.data(), du.data(), du2.data(),
+			ipiv.data());
+
+	if(info != 0) throw std::runtime_error("zgttrf: info = " + std::to_string(info));
 
 	const size_t k = std::lower_bound(s.x.begin(), s.x.end(), -0.5 * s.dx) - s.x.begin();
 	const bool centerOnGrid = std::abs(s.x[k]) < 0.5 * s.dx;
@@ -252,7 +259,11 @@ EvolutionResult evolveLAPACK(const CNSystem& s, std::vector<cd>& psi, const int 
 		for(int j = 1; j < Nx - 1; j++)
 			rhs[j] = s.r * psi[j-1] + s.Bmain[j-1] * psi[j] + s.r * psi[j+1];
 
-		thomas(f, std::span(rhs).subspan(1, n));
+		info = LAPACKE_zgttrs(LAPACK_COL_MAJOR, 'N', n, 1, 
+				dl.data(), d.data(), du.data(), du2.data(), 
+				ipiv.data(), rhs.data() + 1, n);
+
+		if(info != 0) throw std::runtime_error("zgttrs: info = " + std::to_string(info));
 
 		std::swap(psi, rhs);
 	}
@@ -347,9 +358,15 @@ void speedTest()
 		std::cout << "Nt = " << i.first << ":\t" << i.second << " ms\n";
 }
 
-int main()
+int main(int argc, char** argv)
 {
-	speedTest();
+	if(argc < 4) { fprintf(stderr, "usage: cn V0 a outfile\n"); return 1;}
+	double V0 = std::stod(argv[1]);
+	::a = std::stod(argv[2]);
+	std::string outfile = argv[3];
+
+	for(int t = 1000; t <= 50000; t += 1000)
+		printComparison(Crank_Nicolson(V0, 3.0, 1001, 100.0, t, 2000), t);
 
 	return 0;
 }

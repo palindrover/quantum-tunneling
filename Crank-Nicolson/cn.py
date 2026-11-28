@@ -138,19 +138,13 @@ def main(V0, L, Nx, Tfin, Nt, n_out):
     res = compareSplitting(w, dt, T)
     #print(f"Время compareSplitting:\t", (perf_counter() - tCompare) * 1e3)
 
-#    print(f"\n\n{Nt}\n")
-#    for key, val in res.items():
-#        print(f"{key:12s} {val: .6e}")
+    print(f"\n\n{Nt}\n")
+    for key, val in res.items():
+        print(f"{key:12s} {val: .6e}")
 
 
 if __name__ == "__main__":
 
-    cnTime = dict.fromkeys([2000, 5000, 10000, 20000], 0.0)
 
-    for iterations in range(50):
-        for Nt in [2000, 5000, 10000, 20000]:
-            time = perf_counter()
-            main(8.0, 3.0, 1001, 100.0, Nt, 2000)
-            cnTime[Nt] += (perf_counter() - time) / 50 * 1e3
-
-    print(cnTime)
+    for Nt in range(1000, 50001, 1000):
+        main(8.0, 3.0, 1001, 100.0, Nt, 2000)
